@@ -1,1 +1,0 @@
-# Development_of_a_Smart_Photo_Box
