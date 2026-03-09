@@ -1,138 +1,221 @@
-import tkinter as tk
-from PIL import Image, ImageTk
+from pathlib import Path
+
+from PIL import Image
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QFont, QPixmap, QImage
+from PyQt5.QtWidgets import (
+    QWidget,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QHBoxLayout,
+    QStackedLayout,
+    QSizePolicy,
+)
 
 
-class PhotoBoothUI:
+class PhotoBoothUI(QWidget):
     def __init__(
         self,
-        root: tk.Tk,
         on_start_session,
         on_capture_requested,
         on_delete_requested,
         on_print_requested,
     ):
-        self.root = root
+        super().__init__()
+
         self.on_start_session = on_start_session
         self.on_capture_requested = on_capture_requested
         self.on_delete_requested = on_delete_requested
         self.on_print_requested = on_print_requested
 
         self.camera = None
-        self._tk_img = None
         self._preview_running = False
+        self._current_pixmap = None
+
+        self.countdown_value = 5
+        self.countdown_timer = QTimer(self)
+        self.countdown_timer.timeout.connect(self._update_countdown)
+
+        self.preview_timer = QTimer(self)
+        self.preview_timer.timeout.connect(self._update_preview)
 
         self._build_base()
         self.show_welcome()
 
     def _build_base(self):
-        self.root.title("Photo Automate")
-        self.root.configure(bg="black")
-        self.root.attributes("-fullscreen", True)
+        self.setWindowTitle("Photo Automate")
+        self.setStyleSheet("""
+            QWidget {
+                background-color: black;
+                color: white;
+            }
 
-        self.canvas = tk.Canvas(self.root, bg="black", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+            QPushButton {
+                background-color: black;
+                color: white;
+                border: 2px solid white;
+                border-radius: 14px;
+                padding: 12px 28px;
+                font-size: 24px;
+                min-width: 180px;
+            }
 
-        self.bottom = tk.Frame(self.root, bg="black")
-        self.bottom.pack(side=tk.BOTTOM, fill=tk.X)
+            QPushButton:hover {
+                background-color: #111111;
+            }
 
-        self._btn_opts = dict(
-            bg="black",
-            fg="white",
-            activebackground="black",
-            activeforeground="white",
-            bd=0,
-            highlightthickness=0,
+            QPushButton:pressed {
+                background-color: #222222;
+            }
+        """)
+
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        self.preview_container = QWidget()
+        self.preview_stack = QStackedLayout()
+        self.preview_stack.setStackingMode(QStackedLayout.StackAll)
+        self.preview_container.setLayout(self.preview_stack)
+
+        self.preview_label = QLabel()
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.preview_label.setStyleSheet("background-color: black;")
+        self.preview_stack.addWidget(self.preview_label)
+
+        self.overlay_label = QLabel()
+        self.overlay_label.setAlignment(Qt.AlignCenter)
+        self.overlay_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.overlay_label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 160);
+            color: white;
+            font-size: 160px;
+            font-weight: bold;
+        """)
+        self.overlay_label.hide()
+        self.preview_stack.addWidget(self.overlay_label)
+
+        root_layout.addWidget(self.preview_container, stretch=1)
+
+        self.bottom = QWidget()
+        self.bottom.setStyleSheet("background-color: black;")
+        self.bottom_layout = QHBoxLayout(self.bottom)
+        self.bottom_layout.setContentsMargins(20, 16, 20, 16)
+        self.bottom_layout.setSpacing(20)
+        self.bottom_layout.setAlignment(Qt.AlignCenter)
+        root_layout.addWidget(self.bottom, stretch=0)
+
+    def _clear_bottom(self):
+        while self.bottom_layout.count():
+            item = self.bottom_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _pil_to_qpixmap(self, pil_img: Image.Image) -> QPixmap:
+        if pil_img.mode != "RGB":
+            pil_img = pil_img.convert("RGB")
+
+        w, h = pil_img.size
+        data = pil_img.tobytes("raw", "RGB")
+        qimage = QImage(data, w, h, 3 * w, QImage.Format_RGB888)
+        return QPixmap.fromImage(qimage)
+
+    def _set_scaled_pixmap(self, pixmap: QPixmap):
+        if pixmap.isNull():
+            return
+
+        self._current_pixmap = pixmap
+        scaled = pixmap.scaled(
+            self.preview_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
         )
+        self.preview_label.setPixmap(scaled)
 
-    # ---------- Screens ----------
+    def _set_pixmap_from_pil(self, pil_img: Image.Image):
+        pixmap = self._pil_to_qpixmap(pil_img)
+        self._set_scaled_pixmap(pixmap)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._current_pixmap is not None:
+            self._set_scaled_pixmap(self._current_pixmap)
 
     def show_welcome(self):
         self._stop_preview()
-        self._clear()
+        self._clear_bottom()
+        self._current_pixmap = None
+        self.preview_label.clear()
+        self.overlay_label.hide()
 
-        w = self.root.winfo_screenwidth()
-        h = self.root.winfo_screenheight()
+        self.preview_label.setText("Photo Automate\n\nTap to start your session")
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setFont(QFont("DejaVu Sans", 28, QFont.Bold))
 
-        self.canvas.create_text(
-            w // 2,
-            h // 2 - 90,
-            text="Photo Automate",
-            fill="white",
-            font=("DejaVu Sans", 54, "bold"),
-        )
-        self.canvas.create_text(
-            w // 2,
-            h // 2 - 25,
-            text="Tap to start your session",
-            fill="white",
-            font=("DejaVu Sans", 22),
-        )
-
-        start_btn = tk.Button(
-            self.bottom,
-            text="START SESSION",
-            command=self.on_start_session,
-            **self._btn_opts,
-            font=("DejaVu Sans", 26, "bold"),
-        )
-        start_btn.pack(pady=26)
+        start_btn = QPushButton("START SESSION")
+        start_btn.setFont(QFont("DejaVu Sans", 26, QFont.Bold))
+        start_btn.clicked.connect(self.on_start_session)
+        self.bottom_layout.addWidget(start_btn)
 
     def show_live_preview(self, camera):
-        self._clear()
+        self._clear_bottom()
         self.camera = camera
         self._preview_running = True
+        self.preview_label.clear()
+        self.overlay_label.hide()
+        self._current_pixmap = None
 
-        capture_btn = tk.Button(
-            self.bottom,
-            text="📷",
-            command=self.on_capture_requested,
-            **self._btn_opts,
-            font=("Noto Color Emoji", 40),
-        )
-        capture_btn.pack(pady=16)
+        capture_btn = QPushButton("📷")
+        capture_btn.setFont(QFont("DejaVu Sans", 34))
+        capture_btn.clicked.connect(self.start_countdown)
+        self.bottom_layout.addWidget(capture_btn)
 
-        self._update_preview()
+        self.preview_timer.start(33)
 
-    def show_captured_image(self, image_path):
+    def show_captured_image(self, image_path: Path):
         self._stop_preview()
-        self._clear()
+        self._clear_bottom()
+        self.overlay_label.hide()
 
         img = Image.open(image_path)
+        img.thumbnail((1600, 900))
+        self._set_pixmap_from_pil(img)
 
-        cw = self.canvas.winfo_width() or self.root.winfo_screenwidth()
-        ch = self.canvas.winfo_height() or (self.root.winfo_screenheight() - 120)
+        print_btn = QPushButton("🖨 Print")
+        print_btn.setFont(QFont("DejaVu Sans", 22, QFont.Bold))
+        print_btn.clicked.connect(self.on_print_requested)
 
-        img = self._fit(img, cw, ch)
-        self._tk_img = ImageTk.PhotoImage(img)
+        delete_btn = QPushButton("🗑 Delete")
+        delete_btn.setFont(QFont("DejaVu Sans", 22, QFont.Bold))
+        delete_btn.clicked.connect(self.on_delete_requested)
 
-        self.canvas.create_image(
-            cw // 2, ch // 2,
-            image=self._tk_img,
-            anchor=tk.CENTER,
-        )
+        self.bottom_layout.addWidget(print_btn)
+        self.bottom_layout.addWidget(delete_btn)
 
-        row = tk.Frame(self.bottom, bg="black")
-        row.pack(pady=18)
+    def start_countdown(self):
+        if self.countdown_timer.isActive():
+            return
 
-        print_btn = tk.Button(
-    row,
-    text="🖨 Print",
-    command=self.on_print_requested,
-    **self._btn_opts,
-    font=("DejaVu Sans", 26, "bold"),
-)
-        print_btn.pack(side=tk.LEFT, padx=30)
+        self.countdown_value = 5
+        self.overlay_label.setText(str(self.countdown_value))
+        self.overlay_label.raise_()
+        self.overlay_label.show()
+        self.countdown_timer.start(1000)
 
-        delete_btn = tk.Button(
-    row,
-    text="🗑 Delete",
-    command=self.on_delete_requested,
-    **self._btn_opts,
-    font=("DejaVu Sans", 26, "bold"),
-)
-        delete_btn.pack(side=tk.LEFT, padx=30)
+    def _update_countdown(self):
+        self.countdown_value -= 1
 
-    # ---------- Preview loop ----------
+        if self.countdown_value > 0:
+            self.overlay_label.setText(str(self.countdown_value))
+            self.overlay_label.raise_()
+        else:
+            self.countdown_timer.stop()
+            self.overlay_label.hide()
+            self._stop_preview()
+            self.on_capture_requested()
 
     def _update_preview(self):
         if not self._preview_running or self.camera is None:
@@ -141,35 +224,10 @@ class PhotoBoothUI:
         try:
             frame = self.camera.get_preview_frame_rgb()
             img = Image.fromarray(frame)
-
-            w = self.canvas.winfo_width() or self.root.winfo_screenwidth()
-            h = self.canvas.winfo_height() or (self.root.winfo_screenheight() - 120)
-
-            img = self._fit(img, w, h)
-            self._tk_img = ImageTk.PhotoImage(img)
-
-            self.canvas.delete("preview")
-            self.canvas.create_image(
-                w // 2, h // 2,
-                image=self._tk_img,
-                anchor=tk.CENTER,
-                tags="preview",
-            )
-        except Exception:
-            pass
-
-        self.root.after(33, self._update_preview)
+            self._set_pixmap_from_pil(img)
+        except Exception as exc:
+            print(f"Preview error: {exc}")
 
     def _stop_preview(self):
         self._preview_running = False
-
-    def _clear(self):
-        self.canvas.delete("all")
-        for w in self.bottom.winfo_children():
-            w.destroy()
-
-    @staticmethod
-    def _fit(img, w, h):
-        iw, ih = img.size
-        scale = min(w / iw, h / ih)
-        return img.resize((int(iw * scale), int(ih * scale)))
+        self.preview_timer.stop()
