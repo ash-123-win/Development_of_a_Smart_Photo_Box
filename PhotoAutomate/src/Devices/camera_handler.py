@@ -11,9 +11,8 @@ class CaptureConfig:
     warmup_seconds: float = 1.0
     photos_dir_name: str = "photos"
     file_prefix: str = "arducam"
-
     preview_size: tuple[int, int] = (1280, 720)
-    capture_size: tuple[int, int] = (4608, 3472)
+    capture_size: tuple[int, int] = (2304, 1736)
 
 
 class CameraHandler:
@@ -23,6 +22,10 @@ class CameraHandler:
         self._photos_dir = self._resolve_photos_dir()
         self._preview_config = None
         self._still_config = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._picam2 is not None
 
     def open(self) -> None:
         from picamera2 import Picamera2  # type: ignore
@@ -41,8 +44,6 @@ class CameraHandler:
 
         self._picam2.configure(self._preview_config)
         self._picam2.start()
-
-        # Autofocus: continuous
         self._picam2.set_controls({"AfMode": 2})
         time.sleep(float(self.config.warmup_seconds))
 

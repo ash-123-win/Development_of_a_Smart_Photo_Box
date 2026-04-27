@@ -1,7 +1,10 @@
 import logging
 import signal
-import tkinter as tk
+import sys
 from pathlib import Path
+
+from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import QApplication
 
 from Devices.camera_handler import CameraHandler, CaptureConfig
 from Devices.ui_handler import PhotoBoothUI
@@ -24,32 +27,29 @@ class PhotoBoothApp:
             )
         )
 
-        self.root = tk.Tk()
-        self.root.attributes("-fullscreen", True)
-        self.root.configure(bg="black")
-        self.root.focus_force()
-        self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
+        self.qt_app = QApplication(sys.argv)
 
         self.last_photo: Path | None = None
 
         self.ui = PhotoBoothUI(
-            root=self.root,
             on_start_session=self.start_session,
             on_capture_requested=self.capture_photo,
             on_delete_requested=self.delete_photo,
             on_print_requested=self.print_photo,
         )
 
+        self.ui.showFullScreen()
+
         signal.signal(signal.SIGINT, self._on_signal)
         signal.signal(signal.SIGTERM, self._on_signal)
 
     def _on_signal(self, signum, frame):
         logging.info("Signal %s received, shutting down", signum)
-        self.root.after(0, self.shutdown)
+        QTimer.singleShot(0, self.shutdown)
 
     def run(self) -> None:
         logging.info("Starting PhotoBooth application")
-        self.root.mainloop()
+        self.qt_app.exec_()
 
     def start_session(self) -> None:
         logging.info("Starting session")
@@ -88,6 +88,7 @@ class PhotoBoothApp:
         except Exception:
             pass
         try:
-            self.root.destroy()
+            self.ui.close()
         except Exception:
             pass
+        self.qt_app.quit()
