@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QStackedLayout,
     QSizePolicy,
+    QFrame,
+    QProgressBar,
 )
 
 
@@ -21,6 +23,8 @@ class PhotoBoothUI(QWidget):
         on_capture_requested,
         on_delete_requested,
         on_print_requested,
+        on_close_requested,
+        
     ):
         super().__init__()
 
@@ -28,7 +32,7 @@ class PhotoBoothUI(QWidget):
         self.on_capture_requested = on_capture_requested
         self.on_delete_requested = on_delete_requested
         self.on_print_requested = on_print_requested
-
+        self.on_close_requested = on_close_requested
         self.camera = None
         self._preview_running = False
         self._current_pixmap = None
@@ -96,6 +100,12 @@ class PhotoBoothUI(QWidget):
         """)
         self.overlay_label.hide()
         self.preview_stack.addWidget(self.overlay_label)
+        self.print_overlay = QWidget()
+        self.print_overlay.setStyleSheet("background-color: rgba(0, 0, 0, 120);")
+        self.print_overlay_layout = QVBoxLayout(self.print_overlay)
+        self.print_overlay_layout.setAlignment(Qt.AlignCenter)
+        self.print_overlay.hide()
+        self.preview_stack.addWidget(self.print_overlay)
 
         root_layout.addWidget(self.preview_container, stretch=1)
 
@@ -231,3 +241,145 @@ class PhotoBoothUI(QWidget):
     def _stop_preview(self):
         self._preview_running = False
         self.preview_timer.stop()
+        
+    def _show_message_screen(self, title: str, subtitle: str = "", button_text: str | None = None):
+        self._stop_preview()
+        self._clear_bottom()
+        self.overlay_label.hide()
+        self._current_pixmap = None
+
+        text = title
+        if subtitle:
+            text += f"\n\n{subtitle}"
+
+        self.preview_label.clear()
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText(text)
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setFont(QFont("DejaVu Sans", 36, QFont.Bold))
+
+        if button_text:
+            close_btn = QPushButton(button_text)
+            close_btn.setFont(QFont("DejaVu Sans", 24, QFont.Bold))
+            close_btn.clicked.connect(self.on_close_requested)
+            self.bottom_layout.addWidget(close_btn)
+
+
+    def show_print_success_screen(self):
+        self._show_message_screen(
+            title="✅",
+            subtitle="Please collect your photo",
+            button_text="CLOSE",
+        )
+
+
+    def show_print_failed_screen(self):
+        self._show_message_screen(
+            title="Print failed",
+            subtitle="Please check printer",
+            button_text="BACK",
+        )
+        
+    def _clear_print_overlay(self):
+        while self.print_overlay_layout.count():
+            item = self.print_overlay_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+
+    def _show_print_card(
+        self,
+        title: str,
+        subtitle: str,
+        show_progress: bool = False,
+        button_text: str | None = None,
+    ):
+        self._clear_bottom()
+        self.overlay_label.hide()
+        self.print_overlay.raise_()
+        self.print_overlay.show()
+        self._clear_print_overlay()
+
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame {
+                background-color: rgba(20, 20, 20, 230);
+                border: 2px solid rgba(255, 255, 255, 180);
+                border-radius: 24px;
+            }
+        """)
+        card.setFixedWidth(560)
+
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(38, 34, 38, 34)
+        card_layout.setSpacing(20)
+        card_layout.setAlignment(Qt.AlignCenter)
+
+        title_label = QLabel(title)
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setFont(QFont("DejaVu Sans", 32, QFont.Bold))
+        title_label.setStyleSheet("color: white; border: none; background: transparent;")
+
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        subtitle_label.setWordWrap(True)
+        subtitle_label.setFont(QFont("DejaVu Sans", 20))
+        subtitle_label.setStyleSheet("color: white; border: none; background: transparent;")
+
+        card_layout.addWidget(title_label)
+        card_layout.addWidget(subtitle_label)
+
+        if show_progress:
+            progress = QProgressBar()
+            progress.setRange(0, 0)  # infinite loading animation
+            progress.setTextVisible(False)
+            progress.setFixedHeight(18)
+            progress.setStyleSheet("""
+                QProgressBar {
+                    border: 1px solid white;
+                    border-radius: 8px;
+                    background-color: #222222;
+                }
+
+                QProgressBar::chunk {
+                    background-color: white;
+                    border-radius: 8px;
+                }
+            """)
+            card_layout.addWidget(progress)
+
+        if button_text:
+            close_btn = QPushButton(button_text)
+            close_btn.setFont(QFont("DejaVu Sans", 22, QFont.Bold))
+            close_btn.clicked.connect(self.on_close_requested)
+            card_layout.addWidget(close_btn)
+
+        self.print_overlay_layout.addWidget(card)
+
+
+    def show_printing_screen(self):
+        self._show_print_card(
+            title="🖨 Printing...",
+            subtitle="Your photo is being printed.\nPlease wait a moment.",
+            show_progress=True,
+            button_text=None,
+        )
+
+
+    def show_print_success_screen(self):
+        self._show_print_card(
+            title="✅ Done!",
+            subtitle="Please collect your photo.",
+            show_progress=False,
+            button_text="CLOSE",
+        )
+
+
+    def show_print_failed_screen(self):
+        self._show_print_card(
+            title="⚠️ Print failed",
+            subtitle="Please check the printer and try again.",
+            show_progress=False,
+            button_text="BACK",
+        )
