@@ -1,0 +1,7 @@
+# Ignore all files inside Photos folder
+Photos/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+*.cpython-313.pyc

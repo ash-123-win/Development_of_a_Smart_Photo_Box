@@ -3,18 +3,34 @@ import signal
 import sys
 from pathlib import Path
 
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal
 from PyQt5.QtWidgets import QApplication
 
 from Devices.camera_handler import CameraHandler, CaptureConfig
 from Devices.ui_handler import PhotoBoothUI
+from Devices.printer_handler import PrinterHandler
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
 
+class PrintWorker(QThread):
+    success = pyqtSignal()
+    failed = pyqtSignal(str)
 
+    def __init__(self, printer, photo_path: Path):
+        super().__init__()
+        self.printer = printer
+        self.photo_path = photo_path
+
+    def run(self):
+        try:
+            self.printer.print_photo(self.photo_path)
+            self.success.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+            
 class PhotoBoothApp:
     def __init__(self) -> None:
         self.camera = CameraHandler(
@@ -26,6 +42,9 @@ class PhotoBoothApp:
                 warmup_seconds=1.0,
             )
         )
+        self.print_worker = None
+        
+        self.printer = PrinterHandler("Canon_CP1500")
 
         self.qt_app = QApplication(sys.argv)
 
@@ -36,6 +55,7 @@ class PhotoBoothApp:
             on_capture_requested=self.capture_photo,
             on_delete_requested=self.delete_photo,
             on_print_requested=self.print_photo,
+            on_close_requested=self.return_to_preview,
         )
 
         self.ui.showFullScreen()
@@ -79,7 +99,19 @@ class PhotoBoothApp:
         self.ui.show_live_preview(self.camera)
 
     def print_photo(self) -> None:
-        logging.info("Print requested (not implemented yet)")
+        logging.info("Print requested")
+
+        if self.last_photo is None:
+            logging.warning("No photo available to print")
+            return
+
+        try:
+            self.printer.print_photo(self.last_photo)
+            logging.info("Print finished: %s", self.last_photo)
+            self.ui.show_print_success_screen()
+        except Exception:
+            logging.exception("Print failed")
+            self.ui.show_print_failed_screen()
 
     def shutdown(self) -> None:
         logging.info("Shutting down")
@@ -92,3 +124,19 @@ class PhotoBoothApp:
         except Exception:
             pass
         self.qt_app.quit()
+        
+    def return_to_preview(self) -> None:
+        logging.info("Returning to live preview")
+        self.last_photo = None
+        self.ui.show_live_preview(self.camera)
+        
+    def _on_print_success(self) -> None:
+        logging.info("Print finished: %s", self.last_photo)
+        self.ui.show_print_success_screen()
+        self.print_worker = None
+
+
+    def _on_print_failed(self, error_message: str) -> None:
+        logging.error("Print failed: %s", error_message)
+        self.ui.show_print_failed_screen()
+        self.print_worker = None
